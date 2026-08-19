@@ -1,0 +1,17 @@
+[
+  {
+    "name": "policy_retrieval",
+    "description": "Retrieve relevant return/refund policy content from the knowledge base for a given question or topic.",
+    "inputSchema": {
+      "type": "object",
+      "description": "Input for querying the return policy knowledge base.",
+      "properties": {
+        "query": {
+          "type": "string",
+          "description": "The policy question or topic to search for, e.g. 'What is the return policy for electronics in the US?'."
+        }
+      },
+      "required": ["query"]
+    }
+  }
+]

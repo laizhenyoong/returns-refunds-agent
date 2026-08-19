@@ -1,0 +1,51 @@
+[
+  {
+    "name": "order_lookup",
+    "description": "Look up an order by customer ID and product ID, returning its status and purchase date.",
+    "inputSchema": {
+      "type": "object",
+      "description": "Input for looking up an order in the workshop-orders table.",
+      "properties": {
+        "customer_id": {
+          "type": "string",
+          "description": "The unique identifier of the customer who placed the order, e.g. C-01."
+        },
+        "product_id": {
+          "type": "string",
+          "description": "The unique identifier of the ordered product, e.g. P-001."
+        }
+      },
+      "required": ["customer_id", "product_id"]
+    }
+  },
+  {
+    "name": "user_lookup",
+    "description": "Look up a customer's profile by customer ID, returning their name and country code.",
+    "inputSchema": {
+      "type": "object",
+      "description": "Input for looking up a customer in the workshop-customers table.",
+      "properties": {
+        "customer_id": {
+          "type": "string",
+          "description": "The unique identifier of the customer, e.g. C-01."
+        }
+      },
+      "required": ["customer_id"]
+    }
+  },
+  {
+    "name": "product_lookup",
+    "description": "Look up a product by product ID, returning its name, category, and provider.",
+    "inputSchema": {
+      "type": "object",
+      "description": "Input for looking up a product in the workshop-products table.",
+      "properties": {
+        "product_id": {
+          "type": "string",
+          "description": "The unique identifier of the product, e.g. P-001."
+        }
+      },
+      "required": ["product_id"]
+    }
+  }
+]
