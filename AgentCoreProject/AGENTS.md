@@ -25,6 +25,16 @@ Tags defined in `agentcore.json` flow through to deployed CloudFormation resourc
    deployed infrastructure.
 5. **Invocation Input:** Validate runtime payloads and require text prompts to be strings. If a Strands app accepts a
    caller-supplied message history, normalize the history tail with `strip_trailing_tool_use()` before invocation.
+6. **Validate After Editing:** ALWAYS run `agentcore validate` after editing `agentcore.json`, before deploying.
+7. **envVars Shape:** Runtime `envVars` is an array of `{ "name": "KEY", "value": "VALUE" }` objects, not a map:
+   ```json
+   "envVars": [{ "name": "KEY", "value": "VALUE" }]
+   ```
+8. **No Shell/Placeholder Variables in JSON:** NEVER write `${SHELL_VARIABLE}` or `${PARAM}`-style placeholders into
+   `agentcore.json`. The CLI does not expand environment variables in this file — placeholders propagate verbatim into
+   the deployed CDK stack and the runtime IAM policy, producing `AccessDenied` errors at invoke time. Always resolve
+   the variable yourself first (e.g., run the lookup CLI command to get the real memory ID) and write the literal
+   value into `agentcore.json`.
 
 ## Directory Structure
 
@@ -131,7 +141,8 @@ When modifying JSON config files:
 2. Check validation constraint comments (`@regex`, `@min`, `@max`)
 3. Use exact enum values as string literals
 4. Use CloudFormation-safe names (alphanumeric, start with letter)
-5. Run `agentcore validate` to verify changes
+5. Never write `${SHELL_VARIABLE}` or `${PARAM}` placeholders — resolve values yourself and write literals
+6. Run `agentcore validate` after every edit, before deploying
 
 ## Harness Export
 
