@@ -38,11 +38,13 @@ node_modules/
 # CDK
 cdk.out/
 
-# AgentCore CLI runtime artifacts
-agentcore/.cache/
-agentcore/.cli/logs/
-agentcore/.cli/traces/
-agentcore/.llm-context/
+# AgentCore CLI runtime artifacts and local configuration
+AgentCoreProject/agentcore/.cache/
+AgentCoreProject/agentcore/.cli/logs/
+AgentCoreProject/agentcore/.cli/traces/
+AgentCoreProject/agentcore/.cli/deployed-state.json
+AgentCoreProject/agentcore/agentcore.json
+AgentCoreProject/agentcore/.llm-context/
 
 # IDE
 .vscode/
