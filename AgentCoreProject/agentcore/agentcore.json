@@ -14,8 +14,6 @@
       "entrypoint": "main.py",
       "codeLocation": "app/CustomerAssistantAgent/",
       "runtimeVersion": "PYTHON_3_14",
-      "networkMode": "PUBLIC",
-      "protocol": "HTTP",
       "envVars": [
         {
           "name": "MEMORY_ID",
@@ -41,7 +39,9 @@
           "name": "GATEWAY_SCOPE",
           "value": "workshop-gateway/invoke"
         }
-      ]
+      ],
+      "networkMode": "PUBLIC",
+      "protocol": "HTTP"
     }
   ],
   "memories": [

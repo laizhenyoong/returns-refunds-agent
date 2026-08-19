@@ -47,7 +47,7 @@ MEMORY_NAMESPACE = "/users/{actorId}/preference/"
 MEMORY_TOP_K = 10
 MEMORY_RELEVANCE_SCORE = 0.2
 
-DEFAULT_ACTOR_ID = "anonymous"
+DEFAULT_ACTOR_ID = "administrator"
 DEFAULT_SESSION_ID = "default-session"
 MAX_ID_LENGTH = 128
 MAX_CACHED_AGENTS = 128
