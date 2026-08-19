@@ -1,9 +1,10 @@
 """AgentCore Gateway Lambda target for order, customer, and product lookups.
 
-Backs three tools exposed through an AgentCore Gateway Lambda target:
-  - order_lookup:   look up an order by customer_id + product_id
-  - user_lookup:    look up a customer by customer_id
-  - product_lookup: look up a product by product_id
+Backs four tools exposed through an AgentCore Gateway Lambda target:
+  - order_lookup:            look up an order by customer_id + product_id
+  - user_lookup:             look up a customer by customer_id
+  - product_lookup:          look up a product by product_id
+  - find_returned_products:  list all RETURNED orders, enriched with product names
 
 Table names come from the CUSTOMERS_TABLE / ORDERS_TABLE / PRODUCTS_TABLE env vars
 and fall back to the workshop table names. The region is taken from the Lambda
@@ -23,6 +24,7 @@ from decimal import Decimal
 from typing import Any
 
 import boto3
+from boto3.dynamodb.conditions import Attr
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -72,10 +74,40 @@ def _product_lookup(event: dict[str, Any]) -> dict[str, Any]:
     return _get_item(PRODUCTS_TABLE, _require(event, "product_id"))
 
 
+def _product_names(product_ids: set[str]) -> dict[str, str]:
+    """Return a product_id -> product_name map, fetched in a single batch read."""
+    # One BatchGetItem instead of a get_item per order. The workshop table is well
+    # under the 100-key limit, so unprocessed keys don't need handling.
+    if not product_ids:
+        return {}
+    keys = [{"product_id": pid} for pid in product_ids]
+    response = _dynamodb.batch_get_item(RequestItems={PRODUCTS_TABLE: {"Keys": keys}})
+    products = response["Responses"][PRODUCTS_TABLE]
+    return {p["product_id"]: p.get("product_name") for p in products}
+
+
+def _find_returned_products(event: dict[str, Any]) -> dict[str, Any]:
+    """List all orders with status RETURNED, each enriched with its product name."""
+    # No index on `status`, so filter with a scan. `status` is a DynamoDB reserved
+    # word, hence Attr() rather than an inline expression. A single scan page covers
+    # the small workshop table.
+    orders = _dynamodb.Table(ORDERS_TABLE).scan(
+        FilterExpression=Attr("status").eq("RETURNED")
+    )["Items"]
+
+    names = _product_names({order["product_id"] for order in orders})
+    for order in orders:
+        order["product_name"] = names.get(order["product_id"])
+
+    result = {"returned_products": orders, "count": len(orders)}
+    return json.loads(json.dumps(result, default=_decimal_default))
+
+
 _TOOL_DISPATCH = {
     "order_lookup": _order_lookup,
     "user_lookup": _user_lookup,
     "product_lookup": _product_lookup,
+    "find_returned_products": _find_returned_products,
 }
 
 
