@@ -814,6 +814,7 @@ dependencies = [
     { name = "bedrock-agentcore" },
     { name = "botocore", extra = ["crt"] },
     { name = "mcp" },
+    { name = "requests" },
     { name = "strands-agents" },
     { name = "strands-agents-tools" },
 ]
@@ -824,6 +825,7 @@ requires-dist = [
     { name = "bedrock-agentcore", specifier = ">=1.9.1" },
     { name = "botocore", extras = ["crt"], specifier = ">=1.35.0" },
     { name = "mcp", specifier = "~=1.24.0" },
+    { name = "requests", specifier = ">=2.32.0" },
     { name = "strands-agents", specifier = ">=1.15.0" },
     { name = "strands-agents-tools", specifier = ">=0.2.9" },
 ]

@@ -6,13 +6,19 @@ from strands.agent.conversation_manager.null_conversation_manager import NullCon
 from strands_tools.current_time import current_time as get_current_time
 from bedrock_agentcore.runtime import BedrockAgentCoreApp
 from model.load import load_model
-from mcp_client.client import get_streamable_http_mcp_client
+from mcp_client.client import get_gateway_mcp_client
 
 app = BedrockAgentCoreApp()
 log = app.logger
 
-# Define a Streamable HTTP MCP Client
-mcp_clients = [get_streamable_http_mcp_client()]
+# Define a Streamable HTTP MCP Client connected to the AgentCore Gateway.
+# The gateway exposes the data_lookup Lambda's order_lookup/user_lookup/product_lookup
+# tools and the policy_retrieval Lambda's policy_retrieval tool. Authentication is
+# handled internally by GatewayTokenManager (see mcp_client/gateway_auth.py), which
+# obtains and caches a Cognito client_credentials JWT and auto-refreshes it before
+# expiry. GATEWAY_* env vars are read lazily on first use, not at import time, so the
+# module can still be imported (e.g. for tests) without them set.
+mcp_clients = [get_gateway_mcp_client()]
 
 DEFAULT_SYSTEM_PROMPT = """
 You are the Returns & Refunds Assistant. Introduce yourself as such when greeting the user.
@@ -47,149 +53,8 @@ tools.append(add_numbers)
 tools.append(get_current_time)
 
 
-# --- Mock data for order/customer/product lookups and return policies ---
-
-_MOCK_ORDERS = {
-    "ORD-001": {
-        "customer_id": "C-01",
-        "product_id": "P-001",
-        "product_name": "iPhone 15 Pro",
-        "status": "DELIVERED",
-        "days_since_purchase": 5,
-    },
-    "ORD-002": {
-        "customer_id": "C-02",
-        "product_id": "P-003",
-        "product_name": "Kindle Paperwhite",
-        "status": "DELIVERED",
-        "days_since_purchase": 45,
-    },
-    "ORD-003": {
-        "customer_id": "C-01",
-        "product_id": "P-005",
-        "product_name": "PlayStation 5",
-        "status": "SHIPPED",
-        "days_since_purchase": None,
-    },
-}
-
-_MOCK_CUSTOMERS = {
-    "C-01": {"name": "Rajesh Kumar", "country": "IN", "email": "rajesh@example.com"},
-    "C-02": {"name": "Sarah Johnson", "country": "US", "email": "sarah@example.com"},
-    "C-03": {"name": "James Wilson", "country": "UK", "email": "james@example.com"},
-}
-
-_MOCK_PRODUCTS = {
-    "P-001": {"name": "iPhone 15 Pro", "brand": "Apple", "category": "phone"},
-    "P-002": {"name": "Kindle Paperwhite", "brand": "Amazon", "category": "e-book"},
-    "P-003": {"name": "iPad Air", "brand": "Apple", "category": "tablet"},
-}
-
-_MOCK_POLICIES = {
-    "electronics": "Electronics: 30-day return window. 100% refund if the item is unopened; opened items may be subject to a restocking fee.",
-    "clothing": "Clothing: 60-day return window. Full refund regardless of whether tags are attached, provided the item is unworn.",
-    "books": "Books: 14-day return window. 50% refund on returned books.",
-}
-
-
-@tool
-def order_lookup(order_id: str) -> str:
-    """Look up order details by order ID.
-
-    Args:
-        order_id: The order identifier, e.g. "ORD-001".
-
-    Returns:
-        A formatted string with the order's customer, product, status, and purchase age,
-        or a not-found message if the order_id is unknown.
-    """
-    order = _MOCK_ORDERS.get(order_id)
-    if not order:
-        return f"No order found with ID '{order_id}'."
-    days = order["days_since_purchase"]
-    days_str = f"{days} days ago" if days is not None else "unknown"
-    return (
-        f"Order {order_id}:\n"
-        f"  Customer ID: {order['customer_id']}\n"
-        f"  Product ID: {order['product_id']} ({order['product_name']})\n"
-        f"  Status: {order['status']}\n"
-        f"  Purchased: {days_str}"
-    )
-tools.append(order_lookup)
-
-
-@tool
-def user_lookup(user_id: str) -> str:
-    """Retrieve customer information by user ID.
-
-    Args:
-        user_id: The customer identifier, e.g. "C-01".
-
-    Returns:
-        A formatted string with the customer's name, country, and email,
-        or a not-found message if the user_id is unknown.
-    """
-    customer = _MOCK_CUSTOMERS.get(user_id)
-    if not customer:
-        return f"No customer found with ID '{user_id}'."
-    return (
-        f"Customer {user_id}:\n"
-        f"  Name: {customer['name']}\n"
-        f"  Country: {customer['country']}\n"
-        f"  Email: {customer['email']}"
-    )
-tools.append(user_lookup)
-
-
-@tool
-def product_lookup(product_id: str) -> str:
-    """Retrieve product information by product ID.
-
-    Args:
-        product_id: The product identifier, e.g. "P-001".
-
-    Returns:
-        A formatted string with the product's name, brand, and category,
-        or a not-found message if the product_id is unknown.
-    """
-    product = _MOCK_PRODUCTS.get(product_id)
-    if not product:
-        return f"No product found with ID '{product_id}'."
-    return (
-        f"Product {product_id}:\n"
-        f"  Name: {product['name']}\n"
-        f"  Brand: {product['brand']}\n"
-        f"  Category: {product['category']}"
-    )
-tools.append(product_lookup)
-
-
-@tool
-def policy_retrieval(query: str) -> str:
-    """Retrieve return policy information for a product category.
-
-    Args:
-        query: A category name or free-text query, e.g. "electronics" or
-            "what's the return policy for books?".
-
-    Returns:
-        The matching return policy text, or a list of available categories if
-        no match is found.
-    """
-    normalized = query.lower()
-    for category, policy in _MOCK_POLICIES.items():
-        if category in normalized:
-            return policy
-    available = ", ".join(_MOCK_POLICIES.keys())
-    return (
-        f"No specific policy found for '{query}'. "
-        f"Available categories: {available}."
-    )
-tools.append(policy_retrieval)
-
-
-
-# Add MCP client to tools if available
+# Add MCP client to tools if available. The gateway client discovers and exposes
+# order_lookup, user_lookup, product_lookup, and policy_retrieval as callable tools.
 for mcp_client in mcp_clients:
     if mcp_client:
         tools.append(mcp_client)
