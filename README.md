@@ -1,4 +1,4 @@
-## 📦 Returns & Refunds Agent Workshop
+## Returns & Refunds Agent Workshop
 
 In this lab, you'll build a production-ready returns and refunds assistant using the
 AgentCore CLI and Kiro IDE. The AgentCore CLI handles all infrastructure operations:
