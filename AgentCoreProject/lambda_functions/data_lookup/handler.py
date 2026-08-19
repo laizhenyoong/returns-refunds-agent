@@ -1,10 +1,11 @@
 """AgentCore Gateway Lambda target for order, customer, and product lookups.
 
-Backs four tools exposed through an AgentCore Gateway Lambda target:
+Backs five tools exposed through an AgentCore Gateway Lambda target:
   - order_lookup:            look up an order by customer_id + product_id
   - user_lookup:             look up a customer by customer_id
   - product_lookup:          look up a product by product_id
   - find_returned_products:  list all RETURNED orders, enriched with product names
+  - process_refund:          set an order's status to REFUNDED (the only writer here)
 
 Table names come from the CUSTOMERS_TABLE / ORDERS_TABLE / PRODUCTS_TABLE env vars
 and fall back to the workshop table names. The region is taken from the Lambda
@@ -103,11 +104,38 @@ def _find_returned_products(event: dict[str, Any]) -> dict[str, Any]:
     return json.loads(json.dumps(result, default=_decimal_default))
 
 
+def _process_refund(event: dict[str, Any]) -> dict[str, Any]:
+    """Set an order's status to REFUNDED and return the confirmation."""
+    key = _require(event, "customer_id", "product_id")
+    try:
+        # attribute_exists guards UpdateItem's upsert behaviour: without it a wrong
+        # key would silently create a brand new REFUNDED order instead of failing.
+        # ALL_NEW returns the stored order, so the confirmation reflects the write.
+        order = _dynamodb.Table(ORDERS_TABLE).update_item(
+            Key=key,
+            UpdateExpression="SET #status = :refunded",
+            ExpressionAttributeNames={"#status": "status"},
+            ExpressionAttributeValues={":refunded": "REFUNDED"},
+            ConditionExpression=Attr("customer_id").exists(),
+            ReturnValues="ALL_NEW",
+        )["Attributes"]
+    except _dynamodb.meta.client.exceptions.ConditionalCheckFailedException:
+        return {"error": f"No order found in {ORDERS_TABLE} for {key}."}
+
+    confirmation = {
+        "refunded": True,
+        **order,
+        "product": _get_item(PRODUCTS_TABLE, {"product_id": key["product_id"]}),
+    }
+    return json.loads(json.dumps(confirmation, default=_decimal_default))
+
+
 _TOOL_DISPATCH = {
     "order_lookup": _order_lookup,
     "user_lookup": _user_lookup,
     "product_lookup": _product_lookup,
     "find_returned_products": _find_returned_products,
+    "process_refund": _process_refund,
 }
 
 

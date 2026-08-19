@@ -56,5 +56,24 @@
       "description": "No input required; this tool scans the workshop-orders table for all RETURNED orders.",
       "properties": {}
     }
+  },
+  {
+    "name": "process_refund",
+    "description": "Process a refund by setting an order's status to REFUNDED. An order is identified by customer ID plus product ID, since orders have no standalone order ID. This writes to the orders table, so confirm the order and refund amount with the administrator before calling it. Returns the updated order with its product details, or an error if no such order exists.",
+    "inputSchema": {
+      "type": "object",
+      "description": "Identifies the order to refund in the workshop-orders table.",
+      "properties": {
+        "customer_id": {
+          "type": "string",
+          "description": "The unique identifier of the customer who placed the order, e.g. C-01."
+        },
+        "product_id": {
+          "type": "string",
+          "description": "The unique identifier of the ordered product, e.g. P-001."
+        }
+      },
+      "required": ["customer_id", "product_id"]
+    }
   }
 ]
