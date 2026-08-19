@@ -1,0 +1,13 @@
+{
+  "name": "kiro_default",
+  "description": "Default Kiro CLI agent with an auto-sync hook for pyproject.toml changes",
+  "hooks": {
+    "postToolUse": [
+      {
+        "matcher": "fs_write",
+        "command": ".kiro/hooks/sync-pyproject.sh",
+        "timeout_ms": 60000
+      }
+    ]
+  }
+}
