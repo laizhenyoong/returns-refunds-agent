@@ -15,15 +15,22 @@ file defines a Starlette ASGI app with the chosen Agent framework SDK running wi
 
 ## Input Validation
 
-Validate invocation input before forwarding it to Strands. Keep plain prompts typed as strings. If the app accepts a
-caller-supplied message history, retain `strip_trailing_tool_use()`, which normalizes the history tail before
-invoking the agent.
+The entrypoint accepts a JSON object with `prompt` (string), plus optional `actor_id` and `session_id`, which are
+sanitized before use. If you later accept a caller-supplied message history, normalize the history tail with
+`strip_trailing_tool_use()` before invoking the agent.
 
 ## Environment Variables
 
 | Variable | Required | Description |
 | --- | --- | --- |
 | `LOCAL_DEV` | No | Set to `1` to use `.env.local` instead of AgentCore Identity |
+| `MEMORY_ID` | No | AgentCore Memory ID; without it history is in-process only |
+| `MODEL_ID` | No | Bedrock model ID override (see `model/load.py` for the default) |
+| `GATEWAY_URL` | No | Gateway MCP endpoint; unset disables gateway tools |
+| `GATEWAY_CLIENT_ID` | With `GATEWAY_URL` | OAuth client ID for the gateway |
+| `GATEWAY_CLIENT_SECRET` | With `GATEWAY_URL` | OAuth client secret for the gateway |
+| `GATEWAY_TOKEN_ENDPOINT` | With `GATEWAY_URL` | OAuth token endpoint |
+| `GATEWAY_SCOPE` | With `GATEWAY_URL` | OAuth scope requested for gateway calls |
 
 # Developing locally
 

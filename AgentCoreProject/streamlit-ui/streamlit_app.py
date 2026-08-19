@@ -1,14 +1,17 @@
 """Streamlit chat UI for the Returns & Refunds Assistant.
 
-Authentication is handled by the workshop Cognito User Pool (see
-../cognito_config.json). Chat messages are forwarded to the deployed AgentCore
-Runtime agent recorded in ../agentcore/.cli/deployed-state.json.
+Authentication uses the Cognito User Pool described in ../cognito_config.json. Chat
+messages are forwarded to the deployed AgentCore Runtime agent recorded in
+../agentcore/.cli/deployed-state.json. Both locations can be overridden with the
+COGNITO_CONFIG_PATH / DEPLOYED_STATE_PATH env vars, and the runtime can be selected
+directly with AGENT_RUNTIME_ARN or by name with AGENT_RUNTIME_NAME.
 """
 
 from __future__ import annotations
 
 import hashlib
 import json
+import os
 from pathlib import Path
 from typing import Any, Iterator
 
@@ -17,60 +20,66 @@ import streamlit as st
 from botocore.config import Config
 from botocore.exceptions import BotoCoreError, ClientError
 
-REGION = "us-west-2"
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-COGNITO_CONFIG_PATH = PROJECT_ROOT / "cognito_config.json"
-DEPLOYED_STATE_PATH = PROJECT_ROOT / "agentcore" / ".cli" / "deployed-state.json"
-RUNTIME_NAME = "CustomerAssistantAgent"
+COGNITO_CONFIG_PATH = Path(
+    os.environ.get("COGNITO_CONFIG_PATH", PROJECT_ROOT / "cognito_config.json")
+)
+DEPLOYED_STATE_PATH = Path(
+    os.environ.get("DEPLOYED_STATE_PATH", PROJECT_ROOT / "agentcore" / ".cli" / "deployed-state.json")
+)
 
-# Workshop convenience defaults for the login form.
-DEFAULT_USERNAME = "administrator@example.com"
-DEFAULT_PASSWORD = "Workshop1!"
+# Agent calls fan out to memory, gateway and Knowledge Base, so allow a generous read
+# timeout before giving up on the stream.
+AGENTCORE_TIMEOUTS = Config(read_timeout=300, connect_timeout=15, retries={"max_attempts": 2})
 
 WELCOME_MESSAGE = (
     "Hello! I'm your Returns & Refunds Assistant. I can help you look up orders, "
     "check return eligibility, calculate refunds and answer policy questions. "
     "How can I help you today?"
 )
+SESSION_KEYS = ("tokens", "user_email", "actor_id", "session_id", "messages", "challenge")
 
 
 # --------------------------------------------------------------------------- #
 # Configuration
 # --------------------------------------------------------------------------- #
+def _read_json(path: Path, hint: str) -> dict[str, Any]:
+    if not path.exists():
+        raise FileNotFoundError(f"{path} not found. {hint}")
+    return json.loads(path.read_text())
+
+
 @st.cache_data(show_spinner=False)
 def load_cognito_config() -> dict[str, str]:
-    """Read User Pool ID and app client ID from the project's Cognito config."""
-    if not COGNITO_CONFIG_PATH.exists():
-        raise FileNotFoundError(f"Cognito config not found at {COGNITO_CONFIG_PATH}")
-    config = json.loads(COGNITO_CONFIG_PATH.read_text())
+    """Read region, User Pool ID and app client ID from the Cognito config."""
+    config = _read_json(COGNITO_CONFIG_PATH, "Set COGNITO_CONFIG_PATH to its location.")
 
-    # Prefer the UI (public, USER_PASSWORD_AUTH) client. The `client_id` entry is
-    # the gateway machine-to-machine client and only supports client_credentials.
+    # Prefer the UI (public, USER_PASSWORD_AUTH) client. The `client_id` entry is the
+    # gateway machine-to-machine client and only supports client_credentials.
     client_id = config.get("ui_client_id")
     if not client_id:
         raise KeyError(
-            "No 'ui_client_id' in cognito_config.json. Create a public app client "
-            "with ALLOW_USER_PASSWORD_AUTH and record its ID under 'ui_client_id'."
+            "No 'ui_client_id' in the Cognito config. Create a public app client with "
+            "ALLOW_USER_PASSWORD_AUTH and record its ID under 'ui_client_id'."
         )
-    return {
-        "user_pool_id": config["user_pool_id"],
-        "client_id": client_id,
-        "region": config.get("region", REGION),
-    }
+    region = config.get("region") or os.environ.get("AWS_REGION")
+    if not region:
+        raise KeyError("No 'region' in the Cognito config and AWS_REGION is not set.")
+    return {"user_pool_id": config["user_pool_id"], "client_id": client_id, "region": region}
 
 
 @st.cache_data(show_spinner=False)
 def load_agent_runtime_arn() -> str:
-    """Read the deployed AgentCore Runtime ARN from the CLI deployed state."""
-    if not DEPLOYED_STATE_PATH.exists():
-        raise FileNotFoundError(
-            f"Deployed state not found at {DEPLOYED_STATE_PATH}. Run 'agentcore deploy' first."
-        )
-    state = json.loads(DEPLOYED_STATE_PATH.read_text())
-    targets = state.get("targets", {})
-    for target in targets.values():
+    """Return the deployed AgentCore Runtime ARN to invoke."""
+    configured_arn = os.environ.get("AGENT_RUNTIME_ARN")
+    if configured_arn:
+        return configured_arn
+
+    state = _read_json(DEPLOYED_STATE_PATH, "Run 'agentcore deploy' first.")
+    wanted_name = os.environ.get("AGENT_RUNTIME_NAME")
+    for target in state.get("targets", {}).values():
         runtimes = target.get("resources", {}).get("runtimes", {})
-        runtime = runtimes.get(RUNTIME_NAME) or next(iter(runtimes.values()), None)
+        runtime = runtimes.get(wanted_name) if wanted_name else next(iter(runtimes.values()), None)
         if runtime and runtime.get("runtimeArn"):
             return runtime["runtimeArn"]
     raise KeyError(f"No deployed runtime ARN found in {DEPLOYED_STATE_PATH}")
@@ -81,17 +90,15 @@ def load_agent_runtime_arn() -> str:
 # --------------------------------------------------------------------------- #
 @st.cache_resource(show_spinner=False)
 def cognito_client():
-    return boto3.client("cognito-idp", region_name=REGION)
+    return boto3.client("cognito-idp", region_name=load_cognito_config()["region"])
 
 
 @st.cache_resource(show_spinner=False)
 def agentcore_client():
-    # Agent calls fan out to memory, gateway and Knowledge Base, so allow a
-    # generous read timeout before giving up on the stream.
     return boto3.client(
         "bedrock-agentcore",
-        region_name=REGION,
-        config=Config(read_timeout=300, connect_timeout=15, retries={"max_attempts": 2}),
+        region_name=load_cognito_config()["region"],
+        config=AGENTCORE_TIMEOUTS,
     )
 
 
@@ -100,9 +107,8 @@ def agentcore_client():
 # --------------------------------------------------------------------------- #
 def sign_in(username: str, password: str) -> None:
     """Run USER_PASSWORD_AUTH and store tokens (or a pending challenge) in state."""
-    cfg = load_cognito_config()
     response = cognito_client().initiate_auth(
-        ClientId=cfg["client_id"],
+        ClientId=load_cognito_config()["client_id"],
         AuthFlow="USER_PASSWORD_AUTH",
         AuthParameters={"USERNAME": username, "PASSWORD": password},
     )
@@ -125,16 +131,12 @@ def sign_in(username: str, password: str) -> None:
 
 def complete_new_password(new_password: str) -> None:
     """Answer the NEW_PASSWORD_REQUIRED challenge for a first-time login."""
-    cfg = load_cognito_config()
     challenge = st.session_state.challenge
     response = cognito_client().respond_to_auth_challenge(
-        ClientId=cfg["client_id"],
+        ClientId=load_cognito_config()["client_id"],
         ChallengeName="NEW_PASSWORD_REQUIRED",
         Session=challenge["session"],
-        ChallengeResponses={
-            "USERNAME": challenge["username"],
-            "NEW_PASSWORD": new_password,
-        },
+        ChallengeResponses={"USERNAME": challenge["username"], "NEW_PASSWORD": new_password},
     )
 
     if "AuthenticationResult" not in response:
@@ -150,9 +152,9 @@ def _session_id_for(username: str) -> str:
     """Return a stable per-user runtime session ID.
 
     The ID must be deterministic so a user's AgentCore Memory conversation is
-    reattached when they log back in, and it must be unique per user so nobody
-    resumes somebody else's thread. runtimeSessionId requires at least 33
-    characters; "ui-" plus 48 hex digits gives 51.
+    reattached when they log back in, and unique per user so nobody resumes somebody
+    else's thread. runtimeSessionId requires at least 33 characters; "ui-" plus 48 hex
+    digits gives 51.
     """
     digest = hashlib.sha256(username.strip().lower().encode("utf-8")).hexdigest()
     return f"ui-{digest[:48]}"
@@ -167,13 +169,12 @@ def _store_tokens(username: str, auth_result: dict[str, Any]) -> None:
     st.session_state.user_email = username
     # actor_id is the local part of the email, matching the seeded memory actors.
     st.session_state.actor_id = username.split("@")[0]
-    # Stable per user, so the agent's memory session persists across logins.
     st.session_state.session_id = _session_id_for(username)
     st.session_state.messages = [{"role": "assistant", "content": WELCOME_MESSAGE}]
 
 
 def sign_out() -> None:
-    for key in ("tokens", "user_email", "actor_id", "session_id", "messages", "challenge"):
+    for key in SESSION_KEYS:
         st.session_state.pop(key, None)
 
 
@@ -224,86 +225,89 @@ def stream_agent_response(prompt: str) -> Iterator[str]:
         qualifier="DEFAULT",
         payload=payload,
     )
-
-    content_type = response.get("contentType", "")
     body = response["response"]
 
-    if "text/event-stream" in content_type:
-        for raw_line in body.iter_lines(chunk_size=64):
-            if not raw_line:
-                continue
-            line = raw_line.decode("utf-8").strip()
-            if not line.startswith("data:"):
-                continue
-            chunk = line[len("data:") :].strip()
-            if not chunk or chunk == "[DONE]":
-                continue
-            try:
-                # Parse JSON first so quoted strings lose their extra quotes.
-                text = _text_from_event(json.loads(chunk))
-            except json.JSONDecodeError:
-                text = chunk
-            if text:
-                yield text
+    if "text/event-stream" in response.get("contentType", ""):
+        yield from _stream_sse(body)
         return
 
     # Non-streaming response: buffer, then emit whatever text we can find.
-    raw = b"".join(body).decode("utf-8") if not isinstance(body, bytes) else body.decode("utf-8")
+    raw = body.decode("utf-8") if isinstance(body, bytes) else b"".join(body).decode("utf-8")
     try:
         yield _text_from_event(json.loads(raw)) or raw
     except json.JSONDecodeError:
         yield raw
 
 
+def _stream_sse(body: Any) -> Iterator[str]:
+    for raw_line in body.iter_lines(chunk_size=64):
+        line = raw_line.decode("utf-8").strip() if raw_line else ""
+        if not line.startswith("data:"):
+            continue
+        chunk = line[len("data:") :].strip()
+        if not chunk or chunk == "[DONE]":
+            continue
+        try:
+            # Parse JSON first so quoted strings lose their extra quotes.
+            text = _text_from_event(json.loads(chunk))
+        except json.JSONDecodeError:
+            text = chunk
+        if text:
+            yield text
+
+
 # --------------------------------------------------------------------------- #
 # UI
 # --------------------------------------------------------------------------- #
+def render_new_password_form(challenge: dict[str, str]) -> None:
+    st.info(f"First login for {challenge['username']}. Please set a new password.")
+    with st.form("new_password_form"):
+        new_password = st.text_input("New password", type="password")
+        confirm = st.text_input("Confirm new password", type="password")
+        submitted = st.form_submit_button("Set New Password")
+
+    if submitted:
+        if len(new_password) < 8:
+            st.error("Password must be at least 8 characters.")
+        elif new_password != confirm:
+            st.error("Passwords do not match.")
+        else:
+            try:
+                complete_new_password(new_password)
+                st.rerun()
+            except (ClientError, BotoCoreError, RuntimeError) as exc:
+                st.error(f"Could not set new password: {exc}")
+
+    if st.button("Back to login"):
+        st.session_state.challenge = None
+        st.rerun()
+
+
 def render_login() -> None:
     st.title("Returns & Refunds Assistant")
 
     challenge = st.session_state.get("challenge")
-    if challenge and challenge["name"] == "NEW_PASSWORD_REQUIRED":
-        st.info(f"First login for {challenge['username']}. Please set a new password.")
-        with st.form("new_password_form"):
-            new_password = st.text_input("New password", type="password")
-            confirm = st.text_input("Confirm new password", type="password")
-            submitted = st.form_submit_button("Set New Password")
-        if submitted:
-            if len(new_password) < 8:
-                st.error("Password must be at least 8 characters.")
-            elif new_password != confirm:
-                st.error("Passwords do not match.")
-            else:
-                try:
-                    complete_new_password(new_password)
-                    st.rerun()
-                except (ClientError, BotoCoreError, RuntimeError) as exc:
-                    st.error(f"Could not set new password: {exc}")
-        if st.button("Back to login"):
-            st.session_state.challenge = None
-            st.rerun()
+    if challenge:
+        render_new_password_form(challenge)
         return
 
     st.subheader("Sign in")
     with st.form("login_form"):
-        email = st.text_input("Email", value=DEFAULT_USERNAME)
-        password = st.text_input("Password", value=DEFAULT_PASSWORD, type="password")
+        email = st.text_input("Email")
+        password = st.text_input("Password", type="password")
         submitted = st.form_submit_button("Log in")
-    st.caption(
-        "Workshop accounts: administrator@example.com / Workshop1!, "
-        "admin2@example.com / Workshop2!, admin3@example.com / Workshop3!. "
-        "Each account has its own conversation memory."
-    )
-    if submitted:
-        try:
-            sign_in(email.strip(), password)
-            st.rerun()
-        except cognito_client().exceptions.NotAuthorizedException:
-            st.error("Incorrect email or password.")
-        except cognito_client().exceptions.UserNotFoundException:
-            st.error("User not found in the Cognito User Pool.")
-        except (ClientError, BotoCoreError, RuntimeError) as exc:
-            st.error(f"Login failed: {exc}")
+
+    if not submitted:
+        return
+    try:
+        sign_in(email.strip(), password)
+        st.rerun()
+    except cognito_client().exceptions.NotAuthorizedException:
+        st.error("Incorrect email or password.")
+    except cognito_client().exceptions.UserNotFoundException:
+        st.error("User not found in the Cognito User Pool.")
+    except (ClientError, BotoCoreError, RuntimeError) as exc:
+        st.error(f"Login failed: {exc}")
 
 
 def render_sidebar() -> None:
@@ -336,19 +340,25 @@ def render_chat() -> None:
         st.markdown(prompt)
 
     with st.chat_message("assistant"):
-        try:
-            reply = st.write_stream(stream_agent_response(prompt))
-        except ClientError as exc:
-            code = exc.response.get("Error", {}).get("Code", "ClientError")
-            reply = f"Agent invocation failed ({code}): {exc.response.get('Error', {}).get('Message', exc)}"
-            st.error(reply)
-        except (BotoCoreError, OSError) as exc:
-            reply = f"Could not reach the agent (connection or timeout error): {exc}"
-            st.error(reply)
+        reply = _render_reply(prompt)
+
+    st.session_state.messages.append({"role": "assistant", "content": reply or "(no response)"})
+
+
+def _render_reply(prompt: str) -> str:
+    try:
+        reply = st.write_stream(stream_agent_response(prompt))
+    except ClientError as exc:
+        error = exc.response.get("Error", {})
+        reply = f"Agent invocation failed ({error.get('Code', 'ClientError')}): {error.get('Message', exc)}"
+        st.error(reply)
+    except (BotoCoreError, OSError) as exc:
+        reply = f"Could not reach the agent (connection or timeout error): {exc}"
+        st.error(reply)
 
     if isinstance(reply, list):
         reply = "".join(str(part) for part in reply)
-    st.session_state.messages.append({"role": "assistant", "content": reply or "(no response)"})
+    return reply
 
 
 def main() -> None:
