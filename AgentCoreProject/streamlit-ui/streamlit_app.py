@@ -7,8 +7,8 @@ Runtime agent recorded in ../agentcore/.cli/deployed-state.json.
 
 from __future__ import annotations
 
+import hashlib
 import json
-import uuid
 from pathlib import Path
 from typing import Any, Iterator
 
@@ -146,6 +146,18 @@ def complete_new_password(new_password: str) -> None:
     st.session_state.challenge = None
 
 
+def _session_id_for(username: str) -> str:
+    """Return a stable per-user runtime session ID.
+
+    The ID must be deterministic so a user's AgentCore Memory conversation is
+    reattached when they log back in, and it must be unique per user so nobody
+    resumes somebody else's thread. runtimeSessionId requires at least 33
+    characters; "ui-" plus 48 hex digits gives 51.
+    """
+    digest = hashlib.sha256(username.strip().lower().encode("utf-8")).hexdigest()
+    return f"ui-{digest[:48]}"
+
+
 def _store_tokens(username: str, auth_result: dict[str, Any]) -> None:
     st.session_state.tokens = {
         "access_token": auth_result["AccessToken"],
@@ -155,8 +167,8 @@ def _store_tokens(username: str, auth_result: dict[str, Any]) -> None:
     st.session_state.user_email = username
     # actor_id is the local part of the email, matching the seeded memory actors.
     st.session_state.actor_id = username.split("@")[0]
-    # runtimeSessionId must be at least 33 characters; a uuid4 hex is 32.
-    st.session_state.session_id = f"ui-{uuid.uuid4().hex}"
+    # Stable per user, so the agent's memory session persists across logins.
+    st.session_state.session_id = _session_id_for(username)
     st.session_state.messages = [{"role": "assistant", "content": WELCOME_MESSAGE}]
 
 
@@ -277,6 +289,11 @@ def render_login() -> None:
         email = st.text_input("Email", value=DEFAULT_USERNAME)
         password = st.text_input("Password", value=DEFAULT_PASSWORD, type="password")
         submitted = st.form_submit_button("Log in")
+    st.caption(
+        "Workshop accounts: administrator@example.com / Workshop1!, "
+        "admin2@example.com / Workshop2!, admin3@example.com / Workshop3!. "
+        "Each account has its own conversation memory."
+    )
     if submitted:
         try:
             sign_in(email.strip(), password)

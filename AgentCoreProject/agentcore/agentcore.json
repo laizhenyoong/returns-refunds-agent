@@ -18,6 +18,10 @@
       "protocol": "HTTP",
       "envVars": [
         {
+          "name": "MEMORY_ID",
+          "value": "AgentCoreProject_CustomerAssistantMemory-xojhd87Kon"
+        },
+        {
           "name": "GATEWAY_URL",
           "value": "https://agentcoreproject-workshop-gateway-hu6pakouw0.gateway.bedrock-agentcore.us-west-2.amazonaws.com/mcp"
         },
