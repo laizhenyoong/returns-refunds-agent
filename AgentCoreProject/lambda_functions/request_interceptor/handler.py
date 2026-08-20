@@ -9,6 +9,11 @@ The cache is written by the RESPONSE interceptor, which derives the same key fro
 the same request. Nothing is coordinated between the two functions beyond
 `cache_key`, so both must build it identically — see `cache_key` in `shared`.
 
+Every tool call is also enriched with the caller's `department`, derived from the
+JWT client id, so a Cedar policy can authorise on it without the agent knowing
+departments exist. Enrichment happens before the cache lookup, which keeps
+department part of the cache key.
+
 Only read-only tools are cacheable (see CACHEABLE_TOOLS). Never cache a tool with
 side effects: a short-circuited call skips the target entirely, so a cached
 `process_refund` would return a stale confirmation without processing anything.
@@ -36,6 +41,8 @@ Two reply shapes are valid, and the gateway rejects anything else with
 `statusCode`. Both must be nested under `mcp`.
 """
 
+import base64
+import binascii
 import hashlib
 import json
 import logging
@@ -66,6 +73,60 @@ CACHEABLE_TOOLS = frozenset(
 )
 
 _table = boto3.resource("dynamodb").Table(CACHE_TABLE)
+
+# Cognito app client -> department, used to enrich the request so a Cedar policy
+# can authorise on it. Client ids are public identifiers, not secrets; the client
+# secrets stay in the gitignored cognito config files.
+DEPARTMENTS = {
+    "12j3bf887j41lsede577e73i7h": "support",   # workshop-gateway-m2m-client
+    "4stf20j4mkp202clh1aqtv1fkq": "finance",   # workshop-gateway-manager-client
+}
+UNKNOWN_DEPARTMENT = "unknown"
+
+
+def _jwt_claims(headers: Any) -> dict[str, Any]:
+    """Decode the JWT payload from the Authorization header.
+
+    The signature is not checked: the gateway validated the token against the
+    Cognito JWKS before this interceptor ever ran, so re-verifying here would
+    only duplicate work. Never treat these claims as trusted input elsewhere.
+    """
+    if not isinstance(headers, dict):
+        return {}
+    # Header casing varies by caller, so match case-insensitively.
+    raw = next((v for k, v in headers.items() if k.lower() == "authorization"), "")
+    token = raw[7:] if raw[:7].lower() == "bearer " else raw
+    parts = token.split(".")
+    if len(parts) != 3:
+        return {}
+    payload = parts[1]
+    payload += "=" * (-len(payload) % 4)  # restore base64url padding
+    try:
+        return json.loads(base64.urlsafe_b64decode(payload))
+    except (binascii.Error, ValueError):
+        logger.warning("Could not decode the JWT payload.")
+        return {}
+
+
+def _enrich(body: Any, headers: Any) -> Any:
+    """Inject the caller's department into a tool call's arguments.
+
+    Runs before the cache lookup, so department is part of the cache key and one
+    department can never be served another's cached result.
+    """
+    if not isinstance(body, dict) or body.get("method") != "tools/call":
+        return body
+
+    claims = _jwt_claims(headers)
+    department = DEPARTMENTS.get(claims.get("client_id"), UNKNOWN_DEPARTMENT)
+
+    params = dict(body.get("params") or {})
+    arguments = dict(params.get("arguments") or {})
+    arguments["department"] = department
+    params["arguments"] = arguments
+
+    logger.info("Enriched %s with department=%s.", params.get("name"), department)
+    return {**body, "params": params}
 
 
 def cache_key(tool_name: str, arguments: Any) -> str:
@@ -111,7 +172,8 @@ def _pass_through(body: Any) -> dict[str, Any]:
 
 
 def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
-    body = ((event.get("mcp") or {}).get("gatewayRequest") or {}).get("body")
+    request = (event.get("mcp") or {}).get("gatewayRequest") or {}
+    body = _enrich(request.get("body"), request.get("headers"))
 
     call = _tool_call(body)
     if call is None:
