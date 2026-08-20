@@ -56,3 +56,6 @@ AgentCoreProject/agentcore/.llm-context/
 # OS
 .DS_Store
 Thumbs.db
+
+# Local evaluation output
+AgentCoreProject/eval/dataset-eval-results.json
