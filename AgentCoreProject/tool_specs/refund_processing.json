@@ -1,0 +1,25 @@
+[
+  {
+    "name": "process_refund",
+    "description": "Issue a refund against an order. Returns a confirmation message with a confirmation ID. This is a mock implementation for testing refund policies: nothing is charged back and no record is updated. Confirm the order, amount, and reason with the administrator before calling it.",
+    "inputSchema": {
+      "type": "object",
+      "description": "Details of the refund to issue.",
+      "properties": {
+        "order_id": {
+          "type": "string",
+          "description": "The unique identifier of the order being refunded, e.g. ORD-001."
+        },
+        "amount": {
+          "type": "integer",
+          "description": "The refund amount in whole US dollars, e.g. 187."
+        },
+        "reason": {
+          "type": "string",
+          "description": "Why the refund is being issued, e.g. 'Item arrived damaged'."
+        }
+      },
+      "required": ["order_id", "amount", "reason"]
+    }
+  }
+]
