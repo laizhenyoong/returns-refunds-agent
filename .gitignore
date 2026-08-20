@@ -31,6 +31,7 @@ env/
 
 # Cognito credentials (contains client secret)
 AgentCoreProject/cognito_config.json
+AgentCoreProject/cognito_manager_config.json
 
 # Node
 node_modules/
