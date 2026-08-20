@@ -1,0 +1,15 @@
+{
+  "llmAsAJudge": {
+    "model": "global.anthropic.claude-sonnet-4-6",
+    "instructions": "You are evaluating a returns and refunds assistant. Review the full conversation and determine whether the agent followed the correct workflow.\n\nThe correct workflow is:\n1. Look up the order using order_lookup or user_lookup tools\n2. Retrieve the return policy for the customers country using policy_retrieval\n3. Check whether the item is within the return eligibility window\n4. Only after confirming eligibility, calculate or suggest a refund amount\n5. Confirm details with the user before finalizing\n\nEvaluate whether these steps happened in a logical order. Minor deviations are acceptable if the agent still verified eligibility before suggesting a refund.\n\nConversation:\n{context}\n\nTools available:\n{available_tools}\n\nActual tool trajectory:\n{actual_tool_trajectory}",
+    "ratingScale": {
+      "numerical": [
+        {"value": 5, "label": "Fully Compliant", "definition": "All workflow steps followed in correct order"},
+        {"value": 4, "label": "Mostly Compliant", "definition": "Key steps present but minor ordering issue"},
+        {"value": 3, "label": "Partially Compliant", "definition": "Some steps skipped but eligibility was checked"},
+        {"value": 2, "label": "Mostly Non-Compliant", "definition": "Major steps skipped or refund suggested without eligibility check"},
+        {"value": 1, "label": "Non-Compliant", "definition": "Agent suggested refund without checking eligibility or looking up order"}
+      ]
+    }
+  }
+}
