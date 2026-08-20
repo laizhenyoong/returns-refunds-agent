@@ -1,0 +1,62 @@
+{
+  "schemaType": "AGENTCORE_EVALUATION_PREDEFINED_V1",
+  "scenarios": [
+    {
+      "scenario_id": "happy-path-return",
+      "turns": [
+        {
+          "input": "Hi, I'm customer C-01. I'd like to return order ORD-001. Can you check whether it's eligible?"
+        }
+      ],
+      "expected_trajectory": ["user_lookup", "order_lookup", "policy_retrieval"],
+      "assertions": [
+        "Agent confirmed the order is eligible for return",
+        "Agent mentioned the return window"
+      ],
+      "metadata": {}
+    },
+    {
+      "scenario_id": "refund-calculation",
+      "turns": [
+        {
+          "input": "Calculate the refund for a $199.99 item with 10% tax and $9.99 shipping. A 15% restocking fee applies.",
+          "expected_response": "The 15% restocking fee on $199.99 is $30.00, leaving $169.99 for the item. Tax is refunded proportionally on that amount at 10%, which is $17.00, for a total refund of $186.99. The $9.99 shipping charge is not refunded."
+        }
+      ],
+      "expected_trajectory": [],
+      "assertions": [
+        "Agent applied the restocking fee before calculating the final refund"
+      ],
+      "metadata": {}
+    },
+    {
+      "scenario_id": "ineligible-return",
+      "turns": [
+        {
+          "input": "I want to return order ORD-003. I bought it 45 days ago. Can I still send it back?"
+        }
+      ],
+      "expected_trajectory": ["order_lookup", "policy_retrieval"],
+      "assertions": [
+        "Agent informed the customer that the item is not eligible for return",
+        "Agent did not suggest a refund for an ineligible item"
+      ],
+      "metadata": {}
+    },
+    {
+      "scenario_id": "policy-lookup",
+      "turns": [
+        {
+          "input": "What is the returns policy for clothing in the UK?",
+          "expected_response": "Most clothing items sold in the UK can be returned within 30 days of receipt of delivery. Items should be returned in their original condition, and some categories such as lingerie and swimwear carry additional handling conditions."
+        }
+      ],
+      "expected_trajectory": ["policy_retrieval"],
+      "assertions": [
+        "Agent retrieved the UK-specific policy",
+        "Agent mentioned the return window duration"
+      ],
+      "metadata": {}
+    }
+  ]
+}
